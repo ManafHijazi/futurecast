@@ -87,9 +87,3 @@ FutureCast is an application designed to predict stock prices using an LSTM neur
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-### Instructions for Adding Screenshots
-
-- Create a `screenshots` folder in the root directory of your project.
-- Save screenshots of your app during different stages (e.g., fetching data, training model, predicting stock price) in the `screenshots` folder.
-- Update the `README.md` file with the correct paths to the screenshots.
