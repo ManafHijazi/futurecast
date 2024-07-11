@@ -3,8 +3,7 @@ requests
 numpy
 pandas
 scikit-learn
-tensorflow
+torch
 joblib
 python-dotenv
 streamlit-lottie
-keras
