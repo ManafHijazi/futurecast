@@ -10,7 +10,6 @@ import torch.nn as nn
 import streamlit as st
 import torch.optim as optim
 from dotenv import load_dotenv
-from streamlit_lottie import st_lottie
 from sklearn.preprocessing import MinMaxScaler
 
 # Set up logging
