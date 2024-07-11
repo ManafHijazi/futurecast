@@ -1,9 +1,10 @@
+streamlit
+requests
 numpy
 pandas
-joblib
-requests
-streamlit
-tensorflow
 scikit-learn
+tensorflow
+joblib
 python-dotenv
 streamlit-lottie
+keras

@@ -9,8 +9,8 @@ import streamlit as st
 from dotenv import load_dotenv
 from streamlit_lottie import st_lottie
 from sklearn.preprocessing import MinMaxScaler
-from keras.layers import Input, Dense, LSTM
-from keras.models import Sequential, load_model
+from tensorflow.keras.layers import Input, Dense, LSTM
+from tensorflow.keras.models import Sequential, load_model
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
