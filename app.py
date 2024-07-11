@@ -3,9 +3,9 @@ import time
 import torch
 import joblib
 import logging
-import requests
 import numpy as np
 import pandas as pd
+import yfinance as yf
 import torch.nn as nn
 import streamlit as st
 import torch.optim as optim
@@ -21,36 +21,31 @@ load_dotenv()
 # Set the document title
 st.set_page_config(page_title="FutureCast")
 
-# Function to fetch data from Alpha Vantage
-def fetch_data(symbol='AAPL', api_key=os.getenv('API_KEY')):
+# Function to fetch data from Yahoo Finance
+def fetch_data_yahoo(symbol='AAPL'):
+    if not symbol:
+        logging.error("Stock symbol is not provided.")
+        st.error("Stock symbol is not provided.")
+        return None
     logging.info(f"Fetching data for symbol: {symbol}")
-    url = f'https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol={symbol}&apikey={api_key}&outputsize=full'
-    response = requests.get(url)
-    logging.info(f"API response status code: {response.status_code}")
-    if response.status_code != 200:
-        logging.error(f"Failed to fetch data: {response.status_code}")
-        st.error(f"Failed to fetch data from Alpha Vantage. Status code: {response.status_code}")
+    df = yf.download(symbol, period='1y')
+    logging.info(f"API response data:\n{df.head()}\n{df.tail()}\nData Length: {len(df)}")
+    if df.empty:
+        logging.error(f"Failed to fetch data for symbol: {symbol}")
+        st.error(f"Failed to fetch data from Yahoo Finance.")
         return None
-    data = response.json()
-    logging.info(f"API response data: {data}")
-    if 'Time Series (Daily)' not in data:
-        logging.error(f"Key 'Time Series (Daily)' not found in the response. Full response: {data}")
-        st.error("Failed to fetch the expected data. Please check the API limits or try again later.")
-        return None
-    df = pd.DataFrame(data['Time Series (Daily)']).T
-    df.columns = ['open', 'high', 'low', 'close', 'adjusted_close', 'volume', 'dividend_amount', 'split_coefficient']
-    df = df.astype(float)
     return df
 
 # Function to add technical indicators
 def add_indicators(df):
-    df['SMA_50'] = df['close'].rolling(window=50).mean()
-    df['SMA_200'] = df['close'].rolling(window=200).mean()
-    df['EMA_50'] = df['close'].ewm(span=50, adjust=False).mean()
-    df['EMA_200'] = df['close'].ewm(span=200, adjust=False).mean()
-    df['RSI'] = calculate_rsi(df['close'])
-    df['MACD'], df['Signal_Line'] = calculate_macd(df['close'])
+    df['SMA_50'] = df['Close'].rolling(window=50).mean()
+    df['SMA_200'] = df['Close'].rolling(window=200).mean()
+    df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
+    df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
+    df['RSI'] = calculate_rsi(df['Close'])
+    df['MACD'], df['Signal_Line'] = calculate_macd(df['Close'])
     df = df.dropna()
+    logging.info(f"Data after adding indicators:\n{df.head()}\n{df.tail()}")
     return df
 
 # Function to calculate RSI
@@ -73,19 +68,29 @@ def calculate_macd(series, span1=12, span2=26, span3=9):
 def preprocess_data(df):
     logging.info("Preprocessing data")
     df = add_indicators(df)
-    scaler = MinMaxScaler()
-    scaled_data = scaler.fit_transform(df[['close', 'SMA_50', 'SMA_200', 'EMA_50', 'EMA_200', 'RSI', 'MACD', 'Signal_Line']])
+    logging.info(f"Data after adding indicators:\n{df.head()}\n{df.tail()}")
 
-    def create_dataset(data, look_back=252):
+    scaler = MinMaxScaler()
+    scaled_data = scaler.fit_transform(df[['Close', 'SMA_50', 'SMA_200', 'EMA_50', 'EMA_200', 'RSI', 'MACD', 'Signal_Line']])
+    logging.info(f"Scaled data shape: {scaled_data.shape}")
+
+    # Dynamically set the look-back period based on available data
+    look_back = min(252, len(scaled_data) - 1)
+    logging.info(f"Using look-back period: {look_back}")
+
+    def create_dataset(data, look_back):
         X, Y = [], []
         for i in range(len(data) - look_back):
             X.append(data[i:(i + look_back)])
             Y.append(data[i + look_back, 0])
         return np.array(X), np.array(Y)
 
-    look_back = 252
     X, Y = create_dataset(scaled_data, look_back)
-    X = X.reshape((X.shape[0], X.shape[1], X.shape[2]))
+
+    logging.info(f"Created dataset X shape: {X.shape}, Y shape: {Y.shape}")
+
+    if len(X) == 0 or len(Y) == 0:
+        raise ValueError("Not enough data to create a dataset. Try a different stock symbol or ensure there's sufficient data.")
 
     return X, Y, scaler
 
@@ -138,9 +143,8 @@ def save_model(model, scaler):
     joblib.dump(scaler, 'scaler.pkl')
 
 # Function to load the model and scaler
-def load_model_and_scaler():
+def load_model_and_scaler(input_size):
     logging.info("Loading the model and scaler")
-    input_size = 8  # Adjusted to match the number of features
     hidden_size = 100
     num_layers = 3
     output_size = 1
@@ -160,7 +164,7 @@ if st.button('Get Data and Train Model'):
     st.write('Fetching data...')
     logging.info("Starting data fetching step")
     with st.spinner('Fetching data...'):
-        df = fetch_data(symbol)
+        df = fetch_data_yahoo(symbol)
     if df is not None:
         st.write('Fetched data:')
         st.dataframe(df)
@@ -168,32 +172,36 @@ if st.button('Get Data and Train Model'):
 
         # Preprocessing data
         logging.info("Starting data preprocessing step")
-        with st.spinner('Preprocessing data...'):
-            X, Y, scaler = preprocess_data(df)
-        logging.info("Data preprocessing step completed")
+        try:
+            with st.spinner('Preprocessing data...'):
+                X, Y, scaler = preprocess_data(df)
+            logging.info("Data preprocessing step completed")
 
-        # Training model
-        logging.info("Starting model training step")
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        start_time = time.time()
+            # Training model
+            logging.info("Starting model training step")
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            start_time = time.time()
 
-        def update_progress(epoch, total_epochs):
-            progress_bar.progress(epoch / total_epochs)
-            status_text.text(f'Training: Epoch {epoch}/{total_epochs}')
-            logging.info(f"Training progress: {epoch}/{total_epochs}")
+            def update_progress(epoch, total_epochs):
+                progress_bar.progress(epoch / total_epochs)
+                status_text.text(f'Training: Epoch {epoch}/{total_epochs}')
+                logging.info(f"Training progress: {epoch}/{total_epochs}")
 
-        with st.spinner('Training model...'):
-            model = build_and_train_model(X, Y, update_progress)
+            with st.spinner('Training model...'):
+                model = build_and_train_model(X, Y, update_progress)
 
-        save_model(model, scaler)
-        end_time = time.time()
-        st.success(f'Model trained in {end_time - start_time:.2f} seconds.')
-        logging.info("Model training step completed")
+            save_model(model, scaler)
+            end_time = time.time()
+            st.success(f'Model trained in {end_time - start_time:.2f} seconds.')
+            logging.info("Model training step completed")
+        except ValueError as e:
+            st.error(str(e))
 
 # Load model and scaler if they exist
 if os.path.exists('stock_price_model.pth') and os.path.exists('scaler.pkl'):
-    model, scaler = load_model_and_scaler()
+    input_size = 8  # Adjusted to match the number of features
+    model, scaler = load_model_and_scaler(input_size)
 else:
     model, scaler = None, None
 
@@ -202,10 +210,10 @@ if model:
     if st.button('Predict'):
         logging.info("Starting prediction step")
         with st.spinner('Predicting...'):
-            df = fetch_data(symbol)
+            df = fetch_data_yahoo(symbol)
             if df is not None:
                 df = add_indicators(df)  # Ensure indicators are present in the latest data
-                latest_data = df[['close', 'SMA_50', 'SMA_200', 'EMA_50', 'EMA_200', 'RSI', 'MACD', 'Signal_Line']].values[-252:]
+                latest_data = df[['Close', 'SMA_50', 'SMA_200', 'EMA_50', 'EMA_200', 'RSI', 'MACD', 'Signal_Line']].values[-252:]
                 latest_data = latest_data[::-1]  # Reverse to have the latest data first
 
                 input_scaled = scaler.transform(latest_data)  # Ensure the correct shape
@@ -213,10 +221,16 @@ if model:
                 model.eval()
                 with torch.no_grad():
                     prediction = model(input_reshaped)
-                prediction_unscaled = scaler.inverse_transform(prediction.numpy())
-                st.write(f'Predicted Stock Price: {prediction_unscaled[0][0]}')
+                prediction_unscaled = scaler.inverse_transform(np.tile(prediction.numpy(), (1, input_scaled.shape[1])))[:, 0]
+                predicted_price = prediction_unscaled[0]
+                previous_close_price = df['Close'].iloc[-2]
+                if predicted_price > previous_close_price:
+                    st.markdown(f'**<span style="color:green">Predicted Stock Price: {predicted_price}</span>**', unsafe_allow_html=True)
+                else:
+                    st.markdown(f'**<span style="color:red">Predicted Stock Price: {predicted_price}</span>**', unsafe_allow_html=True)
+
                 logging.info("Prediction step completed")
 
                 # Display input features for confirmation
                 st.write('Latest Close Prices (used as input features):')
-                st.write(pd.DataFrame(latest_data.reshape(1, -1), columns=[f'Feature {i + 1}' for i in range(latest_data.shape[1])]))
+                st.write(pd.DataFrame(latest_data, columns=['Close', 'SMA_50', 'SMA_200', 'EMA_50', 'EMA_200', 'RSI', 'MACD', 'Signal_Line']))
